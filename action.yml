@@ -1,0 +1,132 @@
+name: 'Rust Release Action'
+description: 'An action for publishing Rust crates, creating GitHub releases, and building cross-platform binaries'
+
+inputs:
+  release_tag:
+    description: 'The version to release (e.g., v1.0.0 or 1.0.0) [defaults to version from Cargo.toml]'
+    required: false
+    default: ''
+
+  release_ref:
+    description: 'The branch, tag or SHA to checkout [defaults to latest]'
+    required: false
+    default: ''
+
+  publish_crate:
+    description: 'Publish the crate to crates.io [defaults to true]'
+    required: false
+    default: 'true'
+
+  cargo_token:
+    description: 'Token for publishing to crates.io [required if publish_crate is true]'
+    required: false
+
+  github_token:
+    description: 'GitHub token for creating releases'
+    required: false
+    default: '${{ github.token }}'
+
+  package_name:
+    description: 'Package name for build artifacts [defaults to name in Cargo.toml]'
+    required: false
+    default: ''
+
+outputs:
+  upload_url:
+    description: 'The upload URL for the created release'
+    value: ${{ steps.create_release.outputs.upload_url }}
+
+  build_matrix:
+    description: 'The build matrix for the release'
+    value: ${{ steps.generate_build_matrix.outputs.build_matrix }}
+
+branding:
+  icon: 'package'
+  color: 'orange'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.release_ref }}
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        profile: minimal
+
+    - uses: seaofvoices/read-data-field-action@v1
+      id: read_version
+      with:
+        file: 'Cargo.toml'
+        field: 'package.version'
+
+    - uses: seaofvoices/read-data-field-action@v1
+      id: read_package_name
+      with:
+        file: 'Cargo.toml'
+        field: 'package.name'
+
+    - name: Set release tag
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.release_tag }}" ]; then
+          echo "release_tag=v${{ steps.read_version.outputs.result }}" >> $GITHUB_ENV
+        else
+          if [[ "${{ inputs.release_tag }}" == v* ]]; then
+            echo "release_tag=${{ inputs.release_tag }}" >> $GITHUB_ENV
+          else
+            echo "release_tag=v${{ inputs.release_tag }}" >> $GITHUB_ENV
+          fi
+        fi
+
+    - name: Set package name
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.package_name }}" ]; then
+          echo "package_name=${{ steps.read_package_name.outputs.result }}" >> $GITHUB_ENV
+        else
+          echo "package_name=${{ inputs.package_name }}" >> $GITHUB_ENV
+        fi
+
+    - name: Publish crate
+      if: ${{ inputs.publish_crate == 'true' }}
+      shell: bash
+      run: cargo publish
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ inputs.cargo_token }}
+
+    - name: Create tag
+      shell: bash
+      run: |
+        git fetch --tags --no-recurse-submodules
+        if [ ! $(git tag -l ${{ env.release_tag }}) ]; then
+          git tag ${{ env.release_tag }}
+          git push origin ${{ env.release_tag }}
+        fi
+
+    - name: Create release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      with:
+        tag_name: ${{ env.release_tag }}
+        name: ${{ env.release_tag }}
+        draft: false
+
+    - name: Generate build matrix
+      id: generate_build_matrix
+      shell: bash
+      run: |
+        echo "build_matrix={\"include\": [
+            {\"os\": \"windows-latest\", \"name\": \"${{ env.package_name }}" \"artifact_name\": \"${{ env.package_name }}-windows-x86_64\", \"cargo_target\": \"x86_64-pc-windows-msvc\"},
+            {\"os\": \"ubuntu-latest\", \"name\": \"${{ env.package_name }}" \"artifact_name\": \"${{ env.package_name }}-linux-x86_64\", \"cargo_target\": \"x86_64-unknown-linux-gnu\"},
+            {\"os\": \"ubuntu-latest\", \"name\": \"${{ env.package_name }}" \"artifact_name\": \"${{ env.package_name }}-linux-aarch64\", \"cargo_target\": \"aarch64-unknown-linux-gnu\", \"linker\": \"gcc-aarch64-linux-gnu\"},
+            {\"os\": \"macos-latest\", \"name\": \"${{ env.package_name }}" \"artifact_name\": \"${{ env.package_name }}-macos-x86_64\", \"cargo_target\": \"x86_64-apple-darwin\"},
+            {\"os\": \"macos-latest\", \"name\": \"${{ env.package_name }}" \"artifact_name\": \"${{ env.package_name }}-macos-aarch64\", \"cargo_target\": \"aarch64-apple-darwin\"}
+          ]}" >> $GITHUB_OUTPUT
