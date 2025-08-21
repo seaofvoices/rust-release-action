@@ -60,6 +60,7 @@ runs:
         profile: minimal
 
     - uses: seaofvoices/read-data-field-action@v1
+      if: "${{ inputs.release_tag == '' }}"
       id: read_version
       with:
         file: 'Cargo.toml'
@@ -67,6 +68,7 @@ runs:
 
     - uses: seaofvoices/read-data-field-action@v1
       id: read_package_name
+      if: "${{ inputs.package_name == '' }}"
       with:
         file: 'Cargo.toml'
         field: 'package.name'
@@ -94,9 +96,9 @@ runs:
         fi
 
     - name: Publish crate
-      if: ${{ inputs.publish_crate == 'true' }}
+      if: ${{ inputs.publish_crate }}
       shell: bash
-      run: cargo publish
+      run: cargo publish --package ${{ env.package_name }}
       env:
         CARGO_REGISTRY_TOKEN: ${{ inputs.cargo_token }}
 
@@ -111,7 +113,7 @@ runs:
 
     - name: Create release
       id: create_release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
       with:
